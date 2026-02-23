@@ -1,0 +1,24 @@
+# Core deep learning
+torch>=2.0.0
+torchvision>=0.15.0
+
+# Numerical and scientific computing
+numpy>=1.24.0
+scipy>=1.10.0
+scikit-learn>=1.2.0
+
+# Image processing and visualization
+matplotlib>=3.7.0
+opencv-python>=4.7.0
+pillow>=9.4.0
+imageio>=2.25.0
+imageio-ffmpeg>=0.4.8
+
+# Deep learning utilities
+einops>=0.6.0
+accelerate>=0.20.0
+wandb>=0.15.0
+
+# Sparse 3D convolutions and efficient attention
+xformers>=0.0.20
+spconv-cu124>=2.3.8
