@@ -485,7 +485,7 @@ def get_projection_figure(batch, visualisation_volume, projection_indices, right
 
 
 @torch.no_grad()
-def get_height_pred_figure(cloud_base_heights, delta_heights_pred, lwp, occupancy_logits, gt_volumes, sampled_feature_height_slice=None, voxel_size=50):
+def get_height_pred_figure(cloud_base_heights, delta_heights_pred, occupancy_logits, gt_volumes, sampled_feature_height_slice=None, voxel_size=50):
     """Create a figure comparing predicted and ground truth height properties."""
     z_dim = gt_volumes.shape[-1]
     grid_heights = torch.arange(z_dim) * voxel_size   # Start height is 0.
@@ -506,13 +506,10 @@ def get_height_pred_figure(cloud_base_heights, delta_heights_pred, lwp, occupanc
     # For visualisation
     gt_cbh[~gt_occupancy] = 0
 
-    gt_lwp = torch.sum(gt_volumes, dim=-1) * voxel_size   # 50 Voxel size
-    gt_lwp *= 1000   # Predict in grams just to scale for loss
-
     if sampled_feature_height_slice is not None:
-        fig, axs = plt.subplots(3, 5)
+        fig, axs = plt.subplots(3, 4)
     else:
-        fig, axs = plt.subplots(2, 3)
+        fig, axs = plt.subplots(2, 2)
 
     axs[0, 0].imshow((cloud_base_heights).float().squeeze().cpu().numpy(), vmin=0.5, vmax=3)
     axs[0, 0].set_title('CBH Pred')
@@ -525,11 +522,6 @@ def get_height_pred_figure(cloud_base_heights, delta_heights_pred, lwp, occupanc
 
     axs[1, 1].imshow(gt_delta_heights.float().squeeze().cpu().numpy(), vmin=0, vmax=1000)
     axs[1, 1].set_title('Delta Heights GT')
-
-    axs[0, 2].imshow(lwp.float().squeeze().cpu().numpy(), vmin=0, vmax=0.5)
-    axs[0, 2].set_title('LWP Pred')
-    axs[1, 2].imshow(gt_lwp.float().squeeze().cpu().numpy(), vmin=0, vmax=500)
-    axs[1, 2].set_title('LWP GT')
 
     if sampled_feature_height_slice is not None:
         _, feature_dim_multiple_slices, x_dim, y_dim = sampled_feature_height_slice.shape
