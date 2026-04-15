@@ -114,7 +114,6 @@ num_processes: 4  # set to the number of GPUs available
 | `--pretrain` | Use Terragen synthetic data configuration | False |
 | `--cbh_lambda` | Weight for cloud base height loss | 0.1 |
 | `--delta_height_lambda` | Weight for delta height loss | 0.1 |
-| `--lwp_lambda` | Weight for liquid water path loss | 1.0 |
 
 
 ## Citation

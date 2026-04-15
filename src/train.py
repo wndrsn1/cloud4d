@@ -125,34 +125,31 @@ def gt_cbh_from_volumes(gt_volumes, voxel_size, start_height):
 
 
 def extract_physical_properties(gt_volumes, voxel_size, start_height):
-    """Extract LWP, cloud base height, and cloud thickness from ground truth volumes."""
+    """Extract cloud base height and cloud thickness from ground truth volumes."""
     _, x_dim, y_dim, z_dim = gt_volumes.shape
     grid_heights = _compute_height_grid(z_dim, voxel_size, start_height, x_dim, y_dim, device=gt_volumes.device)
 
     gt_cbh, gt_delta_heights = _extract_cloud_base_and_thickness(gt_volumes, grid_heights)
 
-    # Liquid water path (multiply with voxel size for correct units kg/m^2)
-    lwp = torch.sum(gt_volumes, dim=-1) * voxel_size
-
-    return lwp, gt_cbh, gt_delta_heights
+    return gt_cbh, gt_delta_heights
 
 def get_all_losses(args, output_dict, gt_volumes, voxel_size, start_height, not_in_all_2d):
     """Compute all training losses based on the current training stage."""
-    lwp_loss, cbh_loss, delta_height_loss = get_stage1_loss(output_dict, gt_volumes, voxel_size, start_height, not_in_all_2d)
+    cbh_loss, delta_height_loss = get_stage1_loss(output_dict, gt_volumes, voxel_size, start_height, not_in_all_2d)
     volume_loss = get_stage2_loss(output_dict, gt_volumes)
 
     if args.stage == 1:
-        loss = args.lwp_lambda * lwp_loss + args.cbh_lambda * cbh_loss + args.delta_height_lambda * delta_height_loss
+        loss = args.cbh_lambda * cbh_loss + args.delta_height_lambda * delta_height_loss
     elif args.stage == 2:
         loss = volume_loss
     else:
         loss = torch.tensor([0])
 
-    return loss, cbh_loss, delta_height_loss, volume_loss, lwp_loss
+    return loss, cbh_loss, delta_height_loss, volume_loss
 
 def get_stage1_loss(output_dict, gt_volumes, voxel_size, start_height, not_in_all_2d):
     """Compute stage 1 losses (2D cloud property prediction)."""
-    lwp, gt_cbh, gt_delta_heights = extract_physical_properties(gt_volumes, voxel_size, start_height)
+    gt_cbh, gt_delta_heights = extract_physical_properties(gt_volumes, voxel_size, start_height)
 
     gt_occupancy = (gt_cbh > 0)
     gt_occupancy[not_in_all_2d] = 0
@@ -163,13 +160,11 @@ def get_stage1_loss(output_dict, gt_volumes, voxel_size, start_height, not_in_al
         # Zero out ground truth where there is no cloud
         gt_cbh[~gt_occupancy] = 0
         gt_delta_heights[~gt_occupancy] = 0
-        lwp[~gt_occupancy] = 0
 
-    lwp_loss = torch.nn.functional.l1_loss(output_dict['lwp_pred'].squeeze(1), lwp.to(pred_datatype), reduction='mean')
     cbh_loss = torch.nn.functional.l1_loss(output_dict['cloud_base_heights'].squeeze(1), gt_cbh.to(pred_datatype) / 1000, reduction='mean')
     delta_height_loss = torch.nn.functional.l1_loss(output_dict['delta_heights_pred'].squeeze(1), gt_delta_heights.to(pred_datatype) / 1000, reduction='mean')
 
-    return lwp_loss, cbh_loss, delta_height_loss
+    return cbh_loss, delta_height_loss
 
 def get_stage2_loss(output_dict, gt_volumes):
     """Compute stage 2 loss (3D volume prediction)."""
@@ -203,7 +198,6 @@ def apply_camera_visibility_mask(output_dict, batch):
 
     output_dict['cloud_base_heights'] = output_dict['cloud_base_heights'] * any_mask
     output_dict['delta_heights_pred'] = output_dict['delta_heights_pred'] * any_mask
-    output_dict['lwp_pred'] = output_dict['lwp_pred'] * any_mask
     output_dict['output_vol'] = output_dict['output_vol'] * mask
     batch['volumes'] = batch['volumes'] * mask
 
@@ -319,7 +313,7 @@ def train(args):
 
             apply_camera_visibility_mask(output_dict, batch)
 
-            loss, cbh_loss, delta_height_loss, volume_loss, lwp_loss = get_all_losses(args, output_dict, batch['volumes'], voxel_sizes[0], start_height, not_in_all_2d)
+            loss, cbh_loss, delta_height_loss, volume_loss = get_all_losses(args, output_dict, batch['volumes'], voxel_sizes[0], start_height, not_in_all_2d)
 
             accelerator.backward(loss)
             optimizer.step()
@@ -348,7 +342,7 @@ def train(args):
 
                     apply_camera_visibility_mask(val_output_dict, val_batch)
 
-                    val_loss, val_cbh_loss, val_delta_height_loss, val_volume_loss, val_lwp_loss = get_all_losses(args, val_output_dict, val_batch['volumes'], voxel_sizes[0], start_height, val_not_in_all_2d)
+                    val_loss, val_cbh_loss, val_delta_height_loss, val_volume_loss = get_all_losses(args, val_output_dict, val_batch['volumes'], voxel_sizes[0], start_height, val_not_in_all_2d)
 
                     # Visualization
                     new_output_vol = output_dict['output_vol']
@@ -371,7 +365,7 @@ def train(args):
                     pred_volumes = pred_volumes[:1]
 
                     for key in ['cloud_base_heights', 'delta_heights_pred',
-                                'coarse_clouds', 'lwp_pred', 'occupancy_logits', 'sampled_feature_height_slice']:
+                                'coarse_clouds', 'occupancy_logits', 'sampled_feature_height_slice']:
                         if key in val_output_dict and val_output_dict[key] is not None:
                             val_output_dict[key] = val_output_dict[key][:1]
 
@@ -387,19 +381,17 @@ def train(args):
                     val_orthographic_sum_fig = get_orthographic_sum_figure(val_pred_volumes, val_batch['volumes'], coarse_cloud=val_output_dict['coarse_clouds'])
                     train_orthographic_sum_fig = get_orthographic_sum_figure(pred_volumes, batch['volumes'], coarse_cloud=output_dict['coarse_clouds'])
 
-                    val_height_pred_fig = get_height_pred_figure(val_output_dict['cloud_base_heights'], val_output_dict['delta_heights_pred'], val_output_dict['lwp_pred'], val_output_dict['occupancy_logits'], val_batch['volumes'], val_output_dict['sampled_feature_height_slice'], voxel_size=voxel_sizes[-1])
-                    train_height_pred_fig = get_height_pred_figure(output_dict['cloud_base_heights'], output_dict['delta_heights_pred'], output_dict['lwp_pred'], output_dict['occupancy_logits'], batch['volumes'], output_dict['sampled_feature_height_slice'], voxel_size=voxel_sizes[-1])
+                    val_height_pred_fig = get_height_pred_figure(val_output_dict['cloud_base_heights'], val_output_dict['delta_heights_pred'], val_output_dict['occupancy_logits'], val_batch['volumes'], val_output_dict['sampled_feature_height_slice'], voxel_size=voxel_sizes[-1])
+                    train_height_pred_fig = get_height_pred_figure(output_dict['cloud_base_heights'], output_dict['delta_heights_pred'], output_dict['occupancy_logits'], batch['volumes'], output_dict['sampled_feature_height_slice'], voxel_size=voxel_sizes[-1])
 
                     accelerator.log({
                         'Training Total Loss': loss.item(),
                         'Training CBH Loss': cbh_loss.item(),
                         'Training Delta Height Loss': delta_height_loss.item(),
-                        'Training LWP Loss': lwp_loss.item(),
                         'Training Volume Loss': volume_loss.item(),
                         'Validation Total Loss': val_loss.item(),
                         'Validation CBH Loss': val_cbh_loss.item(),
                         'Validation Delta Height Loss': val_delta_height_loss.item(),
-                        'Validation LWP Loss': val_lwp_loss.item(),
                         'Validation Volume Loss': val_volume_loss.item(),
                         'Validation Projection': val_projection_fig,
                         'Train Projection': train_projection_fig,
@@ -417,7 +409,6 @@ def train(args):
                     'Training Total Loss': loss.item(),
                     'Training CBH Loss': cbh_loss.item(),
                     'Training Delta Height Loss': delta_height_loss.item(),
-                    'Training LWP Loss': lwp_loss.item(),
                     'Training Volume Loss': volume_loss.item(),
                 }, step=curr_step)
 
@@ -450,7 +441,6 @@ if __name__ == '__main__':
     # Loss weights for stage 1 training
     parser.add_argument('--cbh_lambda', type=float, default=0.1, help='weight for cloud base height loss (default: 0.1)')
     parser.add_argument('--delta_height_lambda', type=float, default=0.1, help='weight for delta height loss (default: 0.1)')
-    parser.add_argument('--lwp_lambda', type=float, default=1.0, help='weight for liquid water path loss (default: 1.0)')
 
     parser.add_argument('--stage1_checkpoint', type=str, default=None, help='path to stage 1 checkpoint for resuming or initializing stage 2 (default: None)')
     parser.add_argument('--stage2_checkpoint', type=str, default=None, help='path to stage 2 checkpoint for resuming (default: None)')
